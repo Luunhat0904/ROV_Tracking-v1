@@ -72,6 +72,6 @@ _Hệ thống cảm biến | Sensor Suite:
 [![ROV v1 Playlist](https://img.youtube.com/vi/6nf9Kq7h-ZE/0.jpg)](https://youtube.com/playlist?list=PL-FaXe2c4DjPuzOlRJh49i_SyJp_6md01)
 ![ROV Design](images/Picture1.png)
 ![ROV Gui](images/gui.jpg)
-![ROV realistic model](images/model2.jpg)
+![ROV realistic model](images/ model2.jpg)
 ![ROV connection diagram](images/Picture3.png)
 ![ROV connection flow chart](images/Picture4.png)
