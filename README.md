@@ -65,3 +65,10 @@ _Hệ thống cảm biến | Sensor Suite:
   Software: Python (Tkinter GUI, PySerial).  
   AI Framework: NVIDIA TensorRT, Ultralytics YOLOv8.  
   Sensors Library: MS5837, MPU9250 (I2C).
+
+### 🎬 Project Video Playlist
+Để xem toàn bộ quá trình thử nghiệm và vận hành của dự án, vui lòng truy cập playlist dưới đây:
+
+[![ROV v1 Playlist](https://img.youtube.com/vi/6nf9Kq7h-ZE/0.jpg)](https://youtube.com/playlist?list=PL-FaXe2c4DjPuzOlRJh49i_SyJp_6md01)
+
+*Nhấn vào hình ảnh để xem danh sách phát (Playlist) trên YouTube*
