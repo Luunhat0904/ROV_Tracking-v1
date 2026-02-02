@@ -66,6 +66,14 @@ _Hệ thống cảm biến | Sensor Suite:
   AI Framework: NVIDIA TensorRT, Ultralytics YOLOv8.  
   Sensors Library: MS5837, MPU9250 (I2C).
 
+## 📐 Mechanical Design
+Toàn bộ kết cấu cơ khí của ROV được thiết kế trên SolidWorks.
+*The entire mechanical structure of the ROV is designed in SolidWorks.*
+
+* **Source Files:** `/mechanical_design`
+* **Main Assembly:** Mở file `Khung hoàn chỉnh.SLDASM` để xem toàn bộ hệ thống.
+* **Universal Format:** File `Khung hoàn chỉnh.STEP` (AP214) dành cho các phần mềm CAD khác.
+
 ### 🎬 Project Video Playlist
 Để xem toàn bộ quá trình thử nghiệm và vận hành của dự án, vui lòng truy cập playlist dưới đây:
 
