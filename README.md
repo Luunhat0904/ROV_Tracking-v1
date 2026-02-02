@@ -69,7 +69,7 @@ _Hệ thống cảm biến | Sensor Suite:
 ### 🎬 Project Video Playlist
 Để xem toàn bộ quá trình thử nghiệm và vận hành của dự án, vui lòng truy cập playlist dưới đây:
 
-[![ROV v1 Playlist](https://img.youtube.com/vi/6nf9Kq7h-ZE/0.jpg)](https://youtube.com/playlist?list=PL-FaXe2c4DjPuzOlRJh49i_SyJp_6md01)
+![ROV v1 Playlist](https://youtube.com/playlist?list=PL-FaXe2c4DjPuzOlRJh49i_SyJp_6md01)
 ![ROV Design](images/Picture1.png)
 ![ROV Gui](images/gui.jpg)
 ![ROV connection diagram](images/Picture3.png)
