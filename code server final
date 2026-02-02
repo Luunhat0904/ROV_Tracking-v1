@@ -1,0 +1,244 @@
+import socket
+import struct
+import cv2
+import numpy as np
+import tensorrt as trt
+import ctypes
+import os
+
+# ================= CONFIG =================
+ENGINE_PATH = "best.engine" 
+HOST = "0.0.0.0"
+PORT = 5001
+IMG_SIZE = 416      
+CONF_THRESH = 0.45   # Giữ mức này để bắt nhạy
+
+# ================= CUDA MEMORY =================
+try:
+    cudart = ctypes.CDLL("libcudart.so")
+except:
+    try:
+        cudart = ctypes.CDLL("/usr/local/cuda/lib64/libcudart.so")
+    except:
+        print("⚠️ WARNING: Could not load libcudart.so")
+
+def cuda_malloc(size):
+    ptr = ctypes.c_void_p(0)
+    cudart.cudaMalloc(ctypes.byref(ptr), size)
+    return ptr
+
+def cuda_free(ptr):
+    cudart.cudaFree(ptr)
+
+def cuda_memcpy_htod(dst, src):
+    cudart.cudaMemcpy(dst, src.ctypes.data, src.nbytes, 1)
+
+def cuda_memcpy_dtoh(dst, src):
+    cudart.cudaMemcpy(dst.ctypes.data, src, dst.nbytes, 2)
+
+# ================= TENSORRT CLASS =================
+class TRTDetector:
+    def __init__(self, engine_path):
+        self.logger = trt.Logger(trt.Logger.WARNING)
+        self.runtime = trt.Runtime(self.logger)
+        
+        if not os.path.exists(engine_path):
+            print(f"❌ ERROR: Engine file '{engine_path}' not found!")
+            exit()
+
+        print(f"📦 Loading Engine: {engine_path}")
+        with open(engine_path, "rb") as f:
+            self.engine = self.runtime.deserialize_cuda_engine(f.read())
+        
+        self.context = self.engine.create_execution_context()
+        self.inputs = []
+        self.outputs = []
+        self.bindings = []
+        self.output_shape = None
+        
+        for binding in self.engine:
+            dims = self.engine.get_binding_shape(binding)
+            size = trt.volume(dims) * self.engine.max_batch_size
+            dtype = trt.nptype(self.engine.get_binding_dtype(binding))
+            
+            host_mem = np.zeros(size, dtype=dtype)
+            device_mem = cuda_malloc(host_mem.nbytes)
+            
+            self.bindings.append(int(device_mem.value))
+            
+            if self.engine.binding_is_input(binding):
+                self.inputs.append({'host': host_mem, 'device': device_mem})
+            else:
+                self.outputs.append({'host': host_mem, 'device': device_mem})
+                self.output_shape = dims
+
+    def infer(self, img):
+        img_r = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+        data = img_r.astype(np.float32) / 255.0
+        data = data.transpose((2, 0, 1)) 
+        data = np.expand_dims(data, axis=0)
+        
+        np.copyto(self.inputs[0]['host'], data.ravel())
+        cuda_memcpy_htod(self.inputs[0]['device'], self.inputs[0]['host'])
+        self.context.execute_v2(bindings=self.bindings)
+        
+        for out in self.outputs:
+            cuda_memcpy_dtoh(out['host'], out['device'])
+            
+        return [out['host'] for out in self.outputs]
+
+# ================= HÀM TÍNH IOU (Intersection over Union) =================
+def compute_iou(box1, box2):
+    # box format: [cx, cy, w, h]
+    # Chuyển sang: [x1, y1, x2, y2]
+    b1_x1, b1_y1 = box1[0] - box1[2]/2, box1[1] - box1[3]/2
+    b1_x2, b1_y2 = box1[0] + box1[2]/2, box1[1] + box1[3]/2
+    
+    b2_x1, b2_y1 = box2[0] - box2[2]/2, box2[1] - box2[3]/2
+    b2_x2, b2_y2 = box2[0] + box2[2]/2, box2[1] + box2[3]/2
+    
+    # Tính diện tích phần giao nhau (Intersection)
+    inter_x1 = max(b1_x1, b2_x1)
+    inter_y1 = max(b1_y1, b2_y1)
+    inter_x2 = min(b1_x2, b2_x2)
+    inter_y2 = min(b1_y2, b2_y2)
+    
+    if inter_x2 < inter_x1 or inter_y2 < inter_y1:
+        return 0.0 # Không giao nhau
+        
+    inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+    
+    # Tính diện tích phần hợp (Union)
+    b1_area = (b1_x2 - b1_x1) * (b1_y2 - b1_y1)
+    b2_area = (b2_x2 - b2_x1) * (b2_y2 - b2_y1)
+    
+    iou = inter_area / (b1_area + b2_area - inter_area + 1e-6)
+    return iou
+
+# ================= XỬ LÝ KẾT QUẢ (SMART NMS) =================
+def postprocess_dual(detector, outputs, orig_w, orig_h):
+    flat_output = outputs[0]
+    try:
+        output_tensor = flat_output.reshape(detector.output_shape)
+    except: return []
+
+    prediction = output_tensor[0].T 
+    if prediction.shape[1] < 5: return []
+        
+    boxes = prediction[:, :4]
+    class_scores = prediction[:, 4:]
+    
+    max_class_ids = np.argmax(class_scores, axis=1)
+    max_scores = np.max(class_scores, axis=1)
+    
+    valid_mask = max_scores > CONF_THRESH
+    if not np.any(valid_mask): return []
+    
+    valid_boxes = boxes[valid_mask]
+    valid_scores = max_scores[valid_mask]
+    valid_classes = max_class_ids[valid_mask]
+    
+    # Sắp xếp điểm cao lên trước
+    sorted_indices = np.argsort(valid_scores)[::-1]
+    
+    results = []
+    scale_x = orig_w / IMG_SIZE
+    scale_y = orig_h / IMG_SIZE
+    
+    for idx in sorted_indices:
+        if len(results) >= 2: break
+        
+        current_box = valid_boxes[idx]
+        current_cls = int(valid_classes[idx])
+        cx, cy, w, h = current_box
+        
+        if (w * h) < 1000: continue # Lọc nhiễu nhỏ
+        if cy < (IMG_SIZE * 0.25): continue # Lọc bóng phản chiếu
+
+        # --- LOGIC THÔNG MINH ---
+        is_duplicate = False
+        for existing in results:
+            exist_cls = existing[0]
+            exist_box_raw = [existing[2]/scale_x, existing[3]/scale_y, existing[4]/scale_x, existing[5]/scale_y]
+            
+            # TRƯỜNG HỢP 1: Khác Class (VD: Xanh & Cam)
+            if current_cls != exist_cls:
+                # Chắc chắn là vật khác nhau -> Không trùng -> Lấy luôn!
+                continue 
+            
+            # TRƯỜNG HỢP 2: Cùng Class (VD: 2 chai Xanh)
+            else:
+                # Tính độ chồng lấn (IoU)
+                iou = compute_iou(current_box, exist_box_raw)
+                # Nếu chồng lên nhau quá 40% -> Coi là 1 vật -> Bỏ qua
+                if iou > 0.40:
+                    is_duplicate = True
+                    break
+        
+        if is_duplicate: continue
+            
+        results.append((
+            current_cls,
+            float(valid_scores[idx]),
+            cx * scale_x,
+            cy * scale_y,
+            w * scale_x,
+            h * scale_y
+        ))
+    
+    return results
+
+# ================= MAIN LOOP =================
+if __name__ == "__main__":
+    print("🚀 Initializing TensorRT Engine...")
+    detector = TRTDetector(ENGINE_PATH)
+    
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((HOST, PORT))
+    sock.listen(1)
+    
+    print(f"✅ Server Ready: {HOST}:{PORT}")
+    
+    while True:
+        try:
+            print("⏳ Waiting...")
+            conn, addr = sock.accept()
+            print(f"🔗 Client: {addr}")
+            
+            while True:
+                header = conn.recv(4)
+                if not header: break
+                msg_len = struct.unpack("I", header)[0]
+                
+                data = b''
+                while len(data) < msg_len:
+                    packet = conn.recv(min(4096, msg_len - len(data)))
+                    if not packet: break
+                    data += packet
+                if len(data) < msg_len: break
+                
+                frame = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+                if frame is None: continue
+                
+                outputs = detector.infer(frame)
+                detections = postprocess_dual(detector, outputs, frame.shape[1], frame.shape[0])
+                
+                # Gửi 49 bytes chuẩn
+                num_objs = len(detections)
+                response = struct.pack("B", num_objs)
+                
+                for det in detections:
+                    response += struct.pack("I5f", *det)
+                
+                if num_objs == 1: response += struct.pack("I5f", 0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                elif num_objs == 0: 
+                    response += struct.pack("I5f", 0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                    response += struct.pack("I5f", 0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                
+                conn.sendall(response)
+                
+        except Exception as e:
+            print(f"❌ Err: {e}")
+        finally:
+            if 'conn' in locals(): conn.close()
